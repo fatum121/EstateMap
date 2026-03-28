@@ -1,0 +1,39 @@
+# IDE - CLion
+.idea/
+cmake-build-*/
+*.swp
+*.swo
+*~
+
+# Pliki skompilowane
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.dll
+*.so
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+CMakeUserPresets.json
+CTestTestfile.cmake
+
+# Dane - to co pobiera i tworzy Twój program
+*.zip
+*.gpkg
+*.csv
+dane/
+
+# System
+.DS_Store
+Thumbs.db
+*.log
+
+# Debug
+cmake-build-debug/
+cmake-build-release/
