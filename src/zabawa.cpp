@@ -22,7 +22,7 @@ int main() {
   while (std::getline(ss, word, ',')) {
    words.push_back(word);
   }
-  
+
   for (const auto& element : words) {
    std::cout << element << " ";
   }
