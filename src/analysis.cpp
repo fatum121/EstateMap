@@ -361,7 +361,7 @@ void exportJSON(const std::vector<WojStats>& woj,
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
     std::string csvPath    = argc > 1 ? argv[1] : "../data/transakcje_rcn.csv";
-    std::string outputPath = argc > 2 ? argv[2] : "../output/data.json";
+    std::string outputPath = argc > 2 ? argv[2] : "../web/data.json";
 
     std::cout << "========================================================\n"
               << " EstateMap - Analiza danych\n"

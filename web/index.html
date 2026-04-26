@@ -344,7 +344,7 @@
         try {
             const [geoRes, dataRes] = await Promise.all([
                 fetch('poland.geojson'),
-                fetch('../output/data.json')
+                fetch('/output/data.json')
             ]);
 
             if (!geoRes.ok) throw new Error('Nie można wczytać poland.geojson');

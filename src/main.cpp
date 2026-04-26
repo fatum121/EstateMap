@@ -150,12 +150,19 @@ void czekaj(int s) {
 // ---------------------------------------------------------------------------
 // Parsowanie i walidacja
 // ---------------------------------------------------------------------------
+// Uzupełnij TERYT zerami wiodącymi do 4 znaków
+// Serwer WFS zwraca np. "219" zamiast "0219" dla powiatu świdnickiego
+std::string padTeryt(const std::string& t) {
+    if (t.size() >= 4) return t;
+    return std::string(4 - t.size(), '0') + t;
+}
+
 std::string kodWoj(const std::string& t) {
-    return t.size() >= 2 ? t.substr(0, 2) : "";
+    return padTeryt(t).substr(0, 2);
 }
 
 std::string kodPowiat(const std::string& t) {
-    return t.size() >= 4 ? t.substr(0, 4) : t;
+    return padTeryt(t).substr(0, 4);
 }
 
 std::string rokMiesiac(const std::string& d) {
