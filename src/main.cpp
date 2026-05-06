@@ -38,8 +38,8 @@
 static const std::string WFS_URL       = "https://mapy.geoportal.gov.pl/wss/service/rcn";
 static const std::string OUTPUT_CSV    = std::string(PROJECT_ROOT) + "/data/transakcje_rcn.csv";
 static const std::string PROGRESS_FILE = std::string(PROJECT_ROOT) + "/data/rcn_progress.txt";
-static const int         PAGE_SIZE     = 2000;
-static const int         NUM_THREADS   = 4;
+static const int         PAGE_SIZE     = 5000;
+static const int         NUM_THREADS   = 8; //watki
 static const int         MAX_RETRIES   = 5;
 static const int         RETRY_DELAY   = 10;
 
@@ -53,8 +53,8 @@ static const std::string PROPERTY_NAMES =
     "ms:teryt,"
     "ms:dok_data,"
     "ms:tran_cena_brutto,"
-    "ms:bud_pow_uzyt,"
-    "ms:bud_adres";
+    "ms:lok_pow_uzyt,"
+    "ms:lok_adres";
 
 static const int IDX_TERYT     = 0;
 static const int IDX_DOK_DATA  = 1;
@@ -63,14 +63,13 @@ static const int IDX_POW       = 3;
 static const int IDX_ADRES     = 4;
 static const std::vector<std::string> FIELDS = {
     "teryt", "dok_data", "tran_cena_brutto",
-    "bud_pow_uzyt", "bud_adres"
+    "lok_pow_uzyt", "lok_adres"
 };
 
 static const std::string CQL_BASE =
-    "nier_rodzaj%3D%27nieruchomoscLokalowa%27"
-    "%20AND%20bud_rodzaj%3D%27mieszkalny%27"
-    "%20AND%20bud_pow_uzyt%20IS%20NOT%20NULL"
-    "%20AND%20bud_pow_uzyt%20%3E%200"
+    "lok_funkcja%3D%27mieszkalna%27"
+    "%20AND%20lok_pow_uzyt%20IS%20NOT%20NULL"
+    "%20AND%20lok_pow_uzyt%20%3E%200"
     "%20AND%20tran_cena_brutto%20IS%20NOT%20NULL"
     "%20AND%20tran_cena_brutto%20%3E%200";
 
@@ -415,7 +414,7 @@ void workerThread(const std::string& typeName,
 // ---------------------------------------------------------------------------
 std::string pobierzNazweWarstwy() {
     CURL* curl = curl_easy_init();
-    if (!curl) return "ms:budynki";
+    if (!curl) return "ms:lokale";
 
     std::string bufor;
     std::string url = WFS_URL + "?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities";
@@ -441,7 +440,7 @@ std::string pobierzNazweWarstwy() {
         }
     }
     std::cout << "Uzywam domyslnej: ms:budynki" << std::endl;
-    return "ms:budynki";
+    return "ms:lokale";
 }
 
 // ---------------------------------------------------------------------------
