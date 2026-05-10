@@ -22,6 +22,7 @@
 #include <numeric>
 #include <cmath>
 #include <iomanip>
+#include <ctime>
 
 // ---------------------------------------------------------------------------
 // Struktury
@@ -45,6 +46,7 @@ struct WojStats {
     double      trend;          // % zmiana rok do roku
     int         liczba_transakcji;
     std::string nazwa;          // "mazowieckie"
+    int         rok;            // 0 = wszystkie lata, inaczej konkretny rok
 };
 
 struct MiastoStats {
@@ -52,6 +54,7 @@ struct MiastoStats {
     std::string woj;
     double      avg_cena_m2;
     int         liczba_transakcji;
+    int         rok;
 };
 
 // ---------------------------------------------------------------------------
@@ -133,6 +136,17 @@ bool toDouble(const std::string& s, double& out) {
 }
 
 // Wczytuje CSV → vector<PropertyRecord>
+int aktualnyRok() {
+    std::time_t t = std::time(nullptr);
+    std::tm* now = std::localtime(&t);
+    return now ? now->tm_year + 1900 : 2026;
+}
+
+bool czyPoprawnyRok(int rok) {
+    static const int currentYear = aktualnyRok();
+    return rok >= 1990 && rok <= currentYear;
+}
+
 std::vector<PropertyRecord> loadCSV(const std::string& path) {
     std::vector<PropertyRecord> records;
     std::ifstream f(path);
@@ -174,6 +188,7 @@ std::vector<PropertyRecord> loadCSV(const std::string& path) {
             try { r.rok = std::stoi(r.rok_mies.substr(0, 4)); }
             catch (...) {}
         }
+        if (!czyPoprawnyRok(r.rok)) r.rok = 0;
 
         records.push_back(std::move(r));
     }
@@ -194,21 +209,34 @@ double median(std::vector<double>& v) {
     return n % 2 == 0 ? (v[n/2-1] + v[n/2]) / 2.0 : v[n/2];
 }
 
-// Oblicz trend rok-do-roku: ((avg_ostatni_rok - avg_poprzedni_rok) / avg_poprzedni_rok) * 100
-double obliczTrend(const std::vector<PropertyRecord>& rekordy) {
+std::vector<int> dostepneLata(const std::vector<PropertyRecord>& records) {
+    std::vector<int> lata;
+    for (const auto& r : records) {
+        if (czyPoprawnyRok(r.rok)) lata.push_back(r.rok);
+    }
+    std::sort(lata.begin(), lata.end());
+    lata.erase(std::unique(lata.begin(), lata.end()), lata.end());
+    return lata;
+}
+
+int najnowszyRok(const std::vector<PropertyRecord>& records) {
+    int maxRok = 0;
+    for (const auto& r : records)
+        if (r.rok > maxRok) maxRok = r.rok;
+    return maxRok;
+}
+
+// Oblicz trend rok-do-roku: ((avg_rok - avg_poprzedni_rok) / avg_poprzedni_rok) * 100
+double obliczTrendDlaRoku(const std::vector<PropertyRecord>& rekordy, int rok) {
     if (rekordy.empty()) return 0.0;
 
-    // Znajdź najnowszy rok w danych
-    int maxRok = 0;
-    for (const auto& r : rekordy)
-        if (r.rok > maxRok) maxRok = r.rok;
-
-    if (maxRok < 2) return 0.0;
-    int prevRok = maxRok - 1;
+    if (rok <= 0) rok = najnowszyRok(rekordy);
+    if (rok < 2) return 0.0;
+    int prevRok = rok - 1;
 
     std::vector<double> biezacy, poprzedni;
     for (const auto& r : rekordy) {
-        if (r.rok == maxRok)  biezacy.push_back(r.cena_m2);
+        if (r.rok == rok)     biezacy.push_back(r.cena_m2);
         if (r.rok == prevRok) poprzedni.push_back(r.cena_m2);
     }
 
@@ -222,7 +250,7 @@ double obliczTrend(const std::vector<PropertyRecord>& rekordy) {
 }
 
 // Statystyki per województwo
-std::vector<WojStats> analizujWoj(const std::vector<PropertyRecord>& records) {
+std::vector<WojStats> analizujWoj(const std::vector<PropertyRecord>& records, int rok = 0) {
     // Grupuj po województwie
     std::map<std::string, std::vector<PropertyRecord>> grupy;
     for (const auto& r : records)
@@ -235,18 +263,22 @@ std::vector<WojStats> analizujWoj(const std::vector<PropertyRecord>& records) {
         WojStats s;
         s.kod  = kod;
         s.nazwa = NAZWY_WOJ.count(kod) ? NAZWY_WOJ.at(kod) : kod;
-        s.liczba_transakcji = (int)rekordy.size();
+        s.rok = rok;
 
         // Średnia
         double suma = 0;
         std::vector<double> wartosci;
         for (const auto& r : rekordy) {
+            if (rok > 0 && r.rok != rok) continue;
             suma += r.cena_m2;
             wartosci.push_back(r.cena_m2);
         }
-        s.avg_cena_m2    = suma / rekordy.size();
+        if (wartosci.empty()) continue;
+
+        s.liczba_transakcji = (int)wartosci.size();
+        s.avg_cena_m2    = suma / wartosci.size();
         s.median_cena_m2 = median(wartosci);
-        s.trend          = obliczTrend(rekordy);
+        s.trend          = obliczTrendDlaRoku(rekordy, rok);
 
         wyniki.push_back(s);
     }
@@ -256,12 +288,14 @@ std::vector<WojStats> analizujWoj(const std::vector<PropertyRecord>& records) {
 
 // Top N miast per województwo
 std::map<std::string, std::vector<MiastoStats>> analizujMiasta(
-    const std::vector<PropertyRecord>& records, int topN = 10)
+    const std::vector<PropertyRecord>& records, int topN = 10, int rok = 0)
 {
     // Grupuj po woj + miasto
     std::map<std::string, std::map<std::string, std::vector<double>>> grupy;
-    for (const auto& r : records)
+    for (const auto& r : records) {
+        if (rok > 0 && r.rok != rok) continue;
         grupy[r.woj][r.miasto].push_back(r.cena_m2);
+    }
 
     std::map<std::string, std::vector<MiastoStats>> wyniki;
     for (auto& [woj, miasta] : grupy) {
@@ -271,6 +305,7 @@ std::map<std::string, std::vector<MiastoStats>> analizujMiasta(
             MiastoStats ms;
             ms.miasto  = miasto;
             ms.woj     = woj;
+            ms.rok     = rok;
             ms.liczba_transakcji = (int)ceny.size();
             ms.avg_cena_m2 = std::accumulate(ceny.begin(), ceny.end(), 0.0) / ceny.size();
             stats.push_back(ms);
@@ -308,8 +343,56 @@ std::string fmt(double v, int prec = 2) {
     return ss.str();
 }
 
-void exportJSON(const std::vector<WojStats>& woj,
-                const std::map<std::string, std::vector<MiastoStats>>& miasta,
+void writeWojObject(std::ofstream& f,
+                    const WojStats& w,
+                    const std::map<std::string, std::vector<MiastoStats>>& miasta,
+                    const std::string& indent)
+{
+    f << indent << "{\n";
+    f << indent << "  \"nazwa\": "        << jsonStr(w.nazwa)             << ",\n";
+    f << indent << "  \"rok\": "          << w.rok                        << ",\n";
+    f << indent << "  \"avg_cena_m2\": "  << fmt(w.avg_cena_m2)           << ",\n";
+    f << indent << "  \"median_cena_m2\": " << fmt(w.median_cena_m2)      << ",\n";
+    f << indent << "  \"trend\": "        << fmt(w.trend)                 << ",\n";
+    f << indent << "  \"transakcje\": "   << w.liczba_transakcji          << ",\n";
+
+    f << indent << "  \"miasta\": [\n";
+    if (miasta.count(w.kod)) {
+        const auto& ms = miasta.at(w.kod);
+        for (size_t j = 0; j < ms.size(); j++) {
+            f << indent << "    { \"nazwa\": " << jsonStr(ms[j].miasto)
+              << ", \"avg_cena_m2\": "        << fmt(ms[j].avg_cena_m2)
+              << ", \"transakcje\": "         << ms[j].liczba_transakcji << " }";
+            if (j + 1 < ms.size()) f << ",";
+            f << "\n";
+        }
+    }
+    f << indent << "  ]\n";
+    f << indent << "}";
+}
+
+void writeWojMap(std::ofstream& f,
+                 const std::vector<WojStats>& woj,
+                 const std::map<std::string, std::vector<MiastoStats>>& miasta,
+                 const std::string& indent)
+{
+    f << indent << "{\n";
+    for (size_t i = 0; i < woj.size(); i++) {
+        const auto& w = woj[i];
+        f << indent << "  " << jsonStr(w.kod) << ": ";
+        writeWojObject(f, w, miasta, indent + "  ");
+        if (i + 1 < woj.size()) f << ",";
+        f << "\n";
+    }
+    f << indent << "}";
+}
+
+void exportJSON(const std::vector<WojStats>& wojDomyslne,
+                const std::map<std::string, std::vector<MiastoStats>>& miastaDomyslne,
+                const std::map<int, std::vector<WojStats>>& wojRoczne,
+                const std::map<int, std::map<std::string, std::vector<MiastoStats>>>& miastaRoczne,
+                const std::vector<int>& lata,
+                int domyslnyRok,
                 const std::string& path)
 {
     // Upewnij się że katalog output istnieje
@@ -321,35 +404,25 @@ void exportJSON(const std::vector<WojStats>& woj,
     }
 
     f << "{\n";
-    f << "  \"wojewodztwa\": {\n";
+    f << "  \"lata\": [";
+    for (size_t i = 0; i < lata.size(); i++) {
+        if (i > 0) f << ", ";
+        f << lata[i];
+    }
+    f << "],\n";
+    f << "  \"domyslny_rok\": " << domyslnyRok << ",\n";
+    f << "  \"wojewodztwa\": ";
+    writeWojMap(f, wojDomyslne, miastaDomyslne, "  ");
+    f << ",\n";
+    f << "  \"dane_roczne\": {\n";
 
-    for (size_t i = 0; i < woj.size(); i++) {
-        const auto& w = woj[i];
-        f << "    " << jsonStr(w.kod) << ": {\n";
-        f << "      \"nazwa\": "        << jsonStr(w.nazwa)             << ",\n";
-        f << "      \"avg_cena_m2\": "  << fmt(w.avg_cena_m2)          << ",\n";
-        f << "      \"median_cena_m2\": " << fmt(w.median_cena_m2)     << ",\n";
-        f << "      \"trend\": "        << fmt(w.trend)                 << ",\n";
-        f << "      \"transakcje\": "   << w.liczba_transakcji          << ",\n";
-
-        // Miasta dla tego województwa
-        f << "      \"miasta\": [\n";
-        if (miasta.count(w.kod)) {
-            const auto& ms = miasta.at(w.kod);
-            for (size_t j = 0; j < ms.size(); j++) {
-                f << "        { \"nazwa\": " << jsonStr(ms[j].miasto)
-                  << ", \"avg_cena_m2\": "   << fmt(ms[j].avg_cena_m2)
-                  << ", \"transakcje\": "    << ms[j].liczba_transakcji << " }";
-                if (j + 1 < ms.size()) f << ",";
-                f << "\n";
-            }
-        }
-        f << "      ]\n";
-        f << "    }";
-        if (i + 1 < woj.size()) f << ",";
+    size_t yearIndex = 0;
+    for (const auto& [rok, woj] : wojRoczne) {
+        f << "    " << jsonStr(std::to_string(rok)) << ": ";
+        writeWojMap(f, woj, miastaRoczne.at(rok), "    ");
+        if (++yearIndex < wojRoczne.size()) f << ",";
         f << "\n";
     }
-
     f << "  }\n";
     f << "}\n";
 
@@ -378,8 +451,17 @@ int main(int argc, char* argv[]) {
 
     // 2. Analiza
     std::cout << "Analizuje..." << std::endl;
-    auto wojStats    = analizujWoj(records);
-    auto miastoStats = analizujMiasta(records, 10);
+    const auto lata = dostepneLata(records);
+    const int domyslnyRok = lata.empty() ? 0 : lata.back();
+    auto wojStats    = analizujWoj(records, domyslnyRok);
+    auto miastoStats = analizujMiasta(records, 10, domyslnyRok);
+
+    std::map<int, std::vector<WojStats>> wojRoczne;
+    std::map<int, std::map<std::string, std::vector<MiastoStats>>> miastaRoczne;
+    for (int rok : lata) {
+        wojRoczne[rok] = analizujWoj(records, rok);
+        miastaRoczne[rok] = analizujMiasta(records, 10, rok);
+    }
 
     // 3. Podsumowanie w terminalu
     std::cout << "\nWyniki per wojewodztwo:\n";
@@ -408,7 +490,7 @@ int main(int argc, char* argv[]) {
 
     // 4. Eksport JSON
     std::cout << "\nEksportuje JSON...\n";
-    exportJSON(wojStats, miastoStats, outputPath);
+    exportJSON(wojStats, miastoStats, wojRoczne, miastaRoczne, lata, domyslnyRok, outputPath);
 
     std::cout << "\n========================================================\n"
               << " Gotowe! Otworz web/index.html w przegladarce.\n"

@@ -439,7 +439,7 @@ std::string pobierzNazweWarstwy() {
             return name;
         }
     }
-    std::cout << "Uzywam domyslnej: ms:budynki" << std::endl;
+    std::cout << "Uzywam domyslnej: ms:lokale" << std::endl;
     return "ms:lokale";
 }
 

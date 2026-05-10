@@ -58,6 +58,20 @@
             border: 1px solid var(--border);
             padding: 3px 10px; border-radius: 20px;
         }
+        header .year-filter {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 12px; color: var(--muted);
+        }
+        header select {
+            height: 30px;
+            background: #0d0f12;
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0 28px 0 10px;
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+        }
 
         /* ── PANEL BOCZNY ── */
         #sidebar {
@@ -254,6 +268,10 @@
         <div class="logo">EstateMap</div>
         <div class="subtitle">ceny nieruchomości · Polska</div>
         <div class="spacer"></div>
+        <label class="year-filter" for="year-select">
+            Rok
+            <select id="year-select" disabled></select>
+        </label>
         <div class="badge" id="data-info">ładowanie...</div>
     </header>
 
@@ -299,7 +317,8 @@
 
     const COLORS = ['#1e3a5f','#1d6fa4','#2196c8','#27ae8a','#f0c419','#e67e22','#c0392b'];
 
-    let map, geojsonLayer, data, activeLayer = null;
+    let map, geojsonLayer, dataRaw, data, years = [], selectedYear = null;
+    let activeLayer = null, selectedKod = null;
 
     // ── Inicjalizacja mapy ──────────────────────────────────────────────────────
     map = L.map('map', {
@@ -318,6 +337,7 @@
 
     // ── Skala kolorów ──────────────────────────────────────────────────────────
     function getColor(val, min, max) {
+        if (!Number.isFinite(val) || max <= min) return COLORS[Math.floor(COLORS.length / 2)];
         const t = Math.max(0, Math.min(1, (val - min) / (max - min)));
         const i = Math.floor(t * (COLORS.length - 1));
         const f = t * (COLORS.length - 1) - i;
@@ -351,8 +371,12 @@
             if (!dataRes.ok) throw new Error('Nie można wczytać data.json — uruchom najpierw analysis');
 
             const geojson = await geoRes.json();
-            data = (await dataRes.json()).wojewodztwa;
+            dataRaw = await dataRes.json();
+            years = dataRaw.lata || [];
+            selectedYear = dataRaw.domyslny_rok || years[years.length - 1] || null;
+            data = getDataForYear(selectedYear);
 
+            renderYearSelector();
             renderMap(geojson);
             renderRanking();
             updateLegend();
@@ -365,17 +389,60 @@
         }
     }
 
+    function getDataForYear(year) {
+        if (dataRaw.dane_roczne && year) {
+            return dataRaw.dane_roczne[String(year)] || {};
+        }
+        return dataRaw.wojewodztwa || {};
+    }
+
+    function renderYearSelector() {
+        const select = document.getElementById('year-select');
+        if (!years.length) {
+            select.innerHTML = '<option>brak danych</option>';
+            return;
+        }
+
+        select.innerHTML = years
+            .slice()
+            .sort((a, b) => b - a)
+            .map(year => `<option value="${year}">${year}</option>`)
+            .join('');
+        select.value = selectedYear;
+        select.disabled = false;
+        select.addEventListener('change', e => setYear(Number(e.target.value)));
+    }
+
+    function setYear(year) {
+        selectedYear = year;
+        data = getDataForYear(year);
+        activeLayer = null;
+
+        refreshMapStyles();
+        renderRanking();
+        updateLegend();
+        updateBadge();
+
+        if (selectedKod && data[selectedKod]) {
+            highlightWoj(selectedKod, false);
+            showSelectedCard(selectedKod, data[selectedKod]);
+            markRanking(selectedKod);
+        } else {
+            selectedKod = null;
+            document.getElementById('selected-card').innerHTML =
+                '<div class="card-empty">Kliknij województwo na mapie</div>';
+        }
+    }
+
     // ── Renderowanie mapy ────────────────────────────────────────────────────────
     function renderMap(geojson) {
-        const values = Object.values(data).map(d => d.avg_cena_m2);
-        const minVal = Math.min(...values);
-        const maxVal = Math.max(...values);
+        const { minVal, maxVal } = getPriceRange();
 
         geojsonLayer = L.geoJSON(geojson, {
             style: feature => styleFeature(feature, minVal, maxVal),
             onEachFeature: (feature, layer) => {
                 layer.on({
-                    mouseover: e => onHover(e, minVal, maxVal),
+                    mouseover: e => onHover(e),
                     mouseout:  e => onOut(e),
                     click:     e => onClick(e, feature)
                 });
@@ -385,6 +452,29 @@
         // Zapisz min/max do legendy
         window._minVal = minVal;
         window._maxVal = maxVal;
+    }
+
+    function getPriceRange() {
+        const values = Object.values(data).map(d => d.avg_cena_m2).filter(Number.isFinite);
+        const minVal = values.length ? Math.min(...values) : 0;
+        const maxVal = values.length ? Math.max(...values) : 1;
+        return { minVal, maxVal };
+    }
+
+    function refreshMapStyles() {
+        if (!geojsonLayer) return;
+        const { minVal, maxVal } = getPriceRange();
+        window._minVal = minVal;
+        window._maxVal = maxVal;
+        geojsonLayer.eachLayer(layer => {
+            layer.closeTooltip();
+            setBaseStyle(layer);
+        });
+    }
+
+    function setBaseStyle(layer) {
+        const { minVal, maxVal } = getPriceRange();
+        layer.setStyle(styleFeature(layer.feature, minVal, maxVal));
     }
 
     // Mapa HASC_1 → kod TERYT (2 cyfry)
@@ -419,7 +509,7 @@
         };
     }
 
-    function onHover(e, minVal, maxVal) {
+    function onHover(e) {
         const layer = e.target;
         const kod = getKod(layer.feature);
         const woj = data[kod];
@@ -435,6 +525,7 @@
       <div class="map-tooltip">
         <strong>${woj.nazwa}</strong>
         <span>${Math.round(woj.avg_cena_m2).toLocaleString('pl-PL')} zł/m²</span>
+        <span>${selectedYear}</span>
       </div>
     `, { sticky: true, className: 'leaflet-tooltip-own' }).openTooltip();
         }
@@ -442,25 +533,33 @@
 
     function onOut(e) {
         if (e.target === activeLayer) return;
-        geojsonLayer.resetStyle(e.target);
+        setBaseStyle(e.target);
         e.target.closeTooltip();
     }
 
     function onClick(e, feature) {
         // Resetuj poprzedni aktywny
         if (activeLayer && activeLayer !== e.target) {
-            geojsonLayer.resetStyle(activeLayer);
+            setBaseStyle(activeLayer);
         }
-        activeLayer = e.target;
 
         const kod = getKod(feature);
         const woj = data[kod];
-        if (woj) showSelectedCard(kod, woj);
+        if (!woj) {
+            selectedKod = null;
+            activeLayer = null;
+            document.getElementById('selected-card').innerHTML =
+                '<div class="card-empty">Brak danych dla tego województwa</div>';
+            markRanking('');
+            return;
+        }
+
+        activeLayer = e.target;
+        selectedKod = kod;
+        showSelectedCard(kod, woj);
 
         // Podświetl aktywne w rankingu
-        document.querySelectorAll('.rank-item').forEach(el => {
-            el.classList.toggle('active', el.dataset.kod === kod);
-        });
+        markRanking(kod);
     }
 
     // ── Panel boczny — karta województwa ─────────────────────────────────────────
@@ -490,7 +589,7 @@
         }
 
         document.getElementById('selected-card').innerHTML = `
-    <div class="card-name">${woj.nazwa}</div>
+    <div class="card-name">${woj.nazwa} · ${selectedYear}</div>
     <div class="stat-row">
       <span class="stat-label">Średnia cena/m²</span>
       <span class="stat-value">${Math.round(woj.avg_cena_m2).toLocaleString('pl-PL')} zł</span>
@@ -515,6 +614,10 @@
     function renderRanking() {
         const values = Object.entries(data).map(([kod, w]) => ({ kod, ...w }));
         values.sort((a, b) => b.avg_cena_m2 - a.avg_cena_m2);
+        if (!values.length) {
+            document.getElementById('ranking').innerHTML = '<div class="card-empty">Brak danych dla roku</div>';
+            return;
+        }
         const min = values[values.length-1].avg_cena_m2;
         const max = values[0].avg_cena_m2;
 
@@ -526,30 +629,39 @@
       <span class="rank-val">${Math.round(w.avg_cena_m2).toLocaleString('pl-PL')} zł</span>
     </div>
   `).join('');
+        if (selectedKod) markRanking(selectedKod);
     }
 
     // Kliknięcie w ranking → zaznaczenie na mapie
     function selectWoj(kod) {
+        if (!data[kod]) return;
+        highlightWoj(kod, true);
+        selectedKod = kod;
+        showSelectedCard(kod, data[kod]);
+        markRanking(kod);
+    }
+
+    function highlightWoj(kod, fitBounds) {
         geojsonLayer.eachLayer(layer => {
             const k = getKod(layer.feature);
             if (k === kod) {
-                if (activeLayer && activeLayer !== layer) geojsonLayer.resetStyle(activeLayer);
+                if (activeLayer && activeLayer !== layer) setBaseStyle(activeLayer);
                 activeLayer = layer;
                 layer.setStyle({ fillOpacity: 0.92, weight: 2.5, color: '#4ade80' });
-                map.fitBounds(layer.getBounds(), { padding: [40, 40] });
-                showSelectedCard(kod, data[kod]);
-                document.querySelectorAll('.rank-item').forEach(el => {
-                    el.classList.toggle('active', el.dataset.kod === kod);
-                });
+                if (fitBounds) map.fitBounds(layer.getBounds(), { padding: [40, 40] });
             }
+        });
+    }
+
+    function markRanking(kod) {
+        document.querySelectorAll('.rank-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.kod === kod);
         });
     }
 
     // ── Legenda ───────────────────────────────────────────────────────────────────
     function updateLegend() {
-        const values = Object.values(data).map(d => d.avg_cena_m2);
-        const min = Math.min(...values);
-        const max = Math.max(...values);
+        const { minVal: min, maxVal: max } = getPriceRange();
         const mid = (min + max) / 2;
         document.getElementById('leg-min').textContent = Math.round(min).toLocaleString('pl-PL');
         document.getElementById('leg-mid').textContent = Math.round(mid).toLocaleString('pl-PL');
@@ -560,7 +672,7 @@
     function updateBadge() {
         const total = Object.values(data).reduce((s, w) => s + w.transakcje, 0);
         document.getElementById('data-info').textContent =
-            `${total.toLocaleString('pl-PL')} transakcji · RCN`;
+            `${selectedYear} · ${total.toLocaleString('pl-PL')} transakcji · RCN`;
     }
 
     // ── Loading / Error ───────────────────────────────────────────────────────────
